@@ -44,7 +44,7 @@ fn derive_child_sec(sec_key: &SecretKey, query: &str) -> anyhow::Result<SecretKe
     Ok(child_secret_key)
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let secp = Secp256k1::new();
 
     // Generate a random secret key
@@ -56,19 +56,22 @@ fn main() {
     println!();
 
     // Derive child key from public key
-    let child_pub_key = derive_child_pub(&root_public_key, "example_query").unwrap();
-    println!("Child public key: \n{}", z32::encode(&child_pub_key.serialize()));
+    let child_pub_key = derive_child_pub(&root_public_key, "example_query")?;
+    println!("Child public key (derived from public key): \n{}", z32::encode(&child_pub_key.serialize()));
     println!();
 
     // Derive child key from secret key
     let child_secp = Secp256k1::new();
-    let child_sec_key = derive_child_sec(&root_secret_key, "example_query").unwrap();
-    println!("Child secret derived public key: \n{}",z32::encode(&PublicKey::from_secret_key(&child_secp, &child_sec_key).serialize()));
-    println!("Child secret key: \n{}", z32::encode(&child_sec_key.secret_bytes()));
+    let child_sec_key = derive_child_sec(&root_secret_key, "example_query")?;
+    println!("Child public key (derived from secret key): \n{}",z32::encode(&PublicKey::from_secret_key(&child_secp, &child_sec_key).serialize()));
+    println!();
+    println!("Child secret key (derived from secret key): \n{}", z32::encode(&child_sec_key.secret_bytes()));
     println!();
 
     assert_eq!(
         child_pub_key.serialize(),
         PublicKey::from_secret_key(&secp, &child_sec_key).serialize()
     );
+
+    Ok(())
 }

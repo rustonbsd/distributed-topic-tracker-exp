@@ -289,6 +289,37 @@ fn verify(public_key: &Public, message: &[u8], signature: &[u8; 64]) -> anyhow::
 
 
 fn main() -> anyhow::Result<()> {
+
+    // NOTE: this enables non-hardened key derivation for ed25519 curve keys but breaks
+    //       compatibility with the standard EdDSA rfc:
+    //       https://datatracker.ietf.org/doc/html/rfc8032
+    //       all features like signing and verification should still work as expected
+    //       and the ability to derive child public keys from root public keys without
+    //       exposing the child secret keys to the non-authors of the root secret key is achived.
+    //       (this might not be the recommended from a cryptographic best practice standpoint! idk)
+    //
+    //       This follows the indexing based approach in the paper one to one:
+    //       https://input-output-hk.github.io/adrestia/static/Ed25519_BIP.pdf
+    //
+    //       I will add an example building on this where the index is derived from the hashed query bytes.
+    //       But in principle, we can index our queries uniformly in that space
+    //       by simply hashing the query bytes and taking the first N bytes (or what ever order)
+    //       and use them as the index integer. Since not all indicies make for valid child keys, 
+    //       both author and client keep adding +1 to the query index until a valid key is hit.
+    //       (this is deterministic for both client and author and will always lead to the same first hit index)
+    //       If we wanted to increase the space further the paper has some information about
+    //       child child keys, and so on:
+    //
+    //       "E. Key tree 
+    //         Child with i < 2^31 can be a parent for his children with his
+    //         own chain code ci Proceeding with this, we can create a tree
+    //         of keys where each non-leaf node is a parent for its children
+    //         and is a child for its parent. A path m → i1 → . . . → il
+    //         from the original parent m to a child at level l thus uniquely
+    //         identifies the node."
+    //
+    //       tldr-index-space: lots of keys per root_keypair and X order of child keys 
+    //       (if collisions become a problem).
     let master_secret = [43u8; 32];
     let root_key = generate_root_key(&master_secret)?;
     println!("Root key: {}", root_key);
