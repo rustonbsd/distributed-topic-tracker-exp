@@ -325,17 +325,33 @@ fn main() -> anyhow::Result<()> {
     let message = b"Hello World!";
     let signature = sign(&child_key, message)?;
     let mut signature_fake = signature.clone();
-    signature_fake[13] += 1;
+    signature_fake[7] += 1;
+    let mut message_fake = message.clone();
+    message_fake[7] += 1;
+
+    let fake_master = [56u8; 32];
+    let fake_key = generate_root_key(&fake_master)?;
+    
+    let public_key_fake = fake_key.public.key;
 
     let verify_result = verify(&child_pub_key, message, &signature)?;
-    let verify_result_fake = verify(&child_pub_key, message, &signature_fake)?;
+    let verify_result_fake_sig = verify(&child_pub_key, message, &signature_fake)?;
+    let verify_result_fake_msg = verify(&child_pub_key, &message_fake, &signature)?;
+    let verify_result_fake_pub = verify(&Public { key: public_key_fake, chain_code: child_pub_key.chain_code }, message, &signature)?;
+    let verify_result_fake_chain = verify(&Public { key: public_key_fake, chain_code: fake_key.public.chain_code }, message, &signature)?;
 
     println!("Signature: {}, valid: {}", z32::encode(&signature), verify_result);
-    println!("Signature-fake: {}, valid: {}", z32::encode(&signature_fake),verify_result_fake);
+    println!("Signature-fake: {}, valid: {}", z32::encode(&signature_fake),verify_result_fake_sig);
+    println!("Message-fake: {}, valid: {}", z32::encode(&message_fake),verify_result_fake_msg);
+    println!("Public-key-fake: {}, valid: {}", z32::encode(&public_key_fake),verify_result_fake_pub);
+    println!("Chain-code-fake: {}, valid: {}", z32::encode(&fake_key.public.chain_code),verify_result_fake_chain);
 
     // Verification
     assert!(verify_result);
-    assert!(!verify_result_fake);
+    assert!(!verify_result_fake_sig);
+    assert!(!verify_result_fake_msg);
+    assert!(!verify_result_fake_pub);
+    assert!(!verify_result_fake_chain);
 
     Ok(())
 }
