@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
-use curve25519_dalek::{Scalar, constants::ED25519_BASEPOINT_POINT, traits::IsIdentity};
+use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, edwards::CompressedEdwardsY, traits::IsIdentity, Scalar};
 use hmac::{Hmac, Mac};
-use primitive_types::U256;
+use primitive_types::{U256, U512};
 use sha2::{Digest, Sha512};
 
 #[derive(Debug, Clone)]
@@ -212,19 +212,96 @@ fn derive_child_from_public_key_non_hardened(public: &Public, i: u32) -> anyhow:
     })
 }
 
+fn sign(key: &ExtendedPrivateKey, message: &[u8]) -> anyhow::Result<[u8; 64]> {
+    // "Compute H512(kR||M) and interpret the result as a little-endian-encoded integer r. Compute r ← r mod n"
+    let mut r_hash = Sha512::new();
+    r_hash.update(&key.key_right);   // NOTE: this is why we are not compatible with the ed25519-dalek crate:
+    /* ref: https://datatracker.ietf.org/doc/html/rfc8032#section-5.1.6
+      "Hash the private key, 32 octets, using SHA-512.  Let h denote the
+       resulting digest.  Construct the secret scalar s from the first
+       half of the digest, and the corresponding public key A, as
+       described in the previous section.  Let prefix denote the second
+       half of the hash digest, h[32],...,h[63]."
+     */
+    r_hash.update(message);
+    let r_bytes: [u8; 64] = r_hash.finalize().try_into()?;
+
+    // "Compute point [r]B and let R be its encoding."
+    let r_mod: [u8; 32] = (U512::from_little_endian(&r_bytes) % U256::from_little_endian(&BASEPOINT_ORDER)).to_little_endian()[..32].try_into()?;
+    let r_scalar = Scalar::from_bytes_mod_order(r_mod);
+    let r = (ED25519_BASEPOINT_POINT * r_scalar).compress().to_bytes();
+
+    // "Compute x ← H512(R||A||M), and interpret the 64-byte digest as a little-endian integer."
+    let mut x_hash = Sha512::new();
+    x_hash.update(&r);
+    x_hash.update(&key.public.key);
+    x_hash.update(message);
+    let x = U512::from_little_endian(x_hash.finalize().as_slice()) % U256::from_little_endian(&BASEPOINT_ORDER);
+
+    // "Compute S = ( r + x · [kL]) mod n."
+    let s: [u8; 32] = {
+        let k_left = U512::from_little_endian(&key.key_left);
+        let _r = U512::from_little_endian(&r_bytes);
+        let s = _r.checked_add(x.checked_mul(k_left).ok_or_else(|| anyhow::anyhow!("overflow"))?)
+            .ok_or_else(|| anyhow::anyhow!("overflow"))?;
+        
+        (s % U512::from_little_endian(&BASEPOINT_ORDER)).to_little_endian()[..32].try_into()?
+    };
+
+    // "The string R||S is the signature"
+    let mut signature = [0u8; 64];
+    signature[..32].copy_from_slice(&r);
+    signature[32..].copy_from_slice(&s);
+    Ok(signature)
+}
+
+fn verify(public_key: &Public, message: &[u8], signature: &[u8; 64]) -> anyhow::Result<bool> {
+    // ref: https://slowli.github.io/ed25519-quirks/basics/
+    // "[s]B == R + [H(R ‖ A ‖ M)]A"
+    let r: [u8; 32] = signature[..32].try_into()?;
+    let s: [u8; 32] = signature[32..].try_into()?;
+
+    // "k = Sc(Hash(R ‖ A ‖ M))"
+    let ram_hash: [u8; 64] = {
+        let mut h = Sha512::new();
+        h.update(r);
+        h.update(&public_key.key);
+        h.update(message);
+        h.finalize().try_into()?
+    };
+    // "Compute SHA512(dom2(F, C) || R || A || PH(M)), and interpret the
+    //  64-octet digest as a little-endian integer k."
+    let k = Scalar::from_bytes_mod_order_wide(&ram_hash);
+
+    // "It's sufficient, but not required, to instead check [S]B = R + [k]A'."
+    let pub_key_edwards = CompressedEdwardsY::from_slice(&public_key.key)?
+        .decompress()
+        .ok_or(anyhow::anyhow!("invalid public key"))?;
+    let s_scalar = Scalar::from_bytes_mod_order(s);
+
+    // [S]B = R + [k]A'
+    // or 
+    // [S]B - [k]A' = R
+    let sb_minus_k_a = (ED25519_BASEPOINT_POINT * s_scalar) - (pub_key_edwards * k);
+    
+    Ok(sb_minus_k_a.compress().to_bytes() == r)
+}
+
+
 fn main() -> anyhow::Result<()> {
     let master_secret = [43u8; 32];
     let root_key = generate_root_key(&master_secret)?;
     println!("Root key: {}", root_key);
+    sign(&root_key, b"hello world")?;
 
     let (child_key, index) = {
         let mut i = 0;
         loop {
             if let Ok(child_key) = derive_child_from_secret_key_non_hardened(&root_key, i) {
-                break (child_key, i)
+                break (child_key, i);
             }
             println!("i: {}", i);
-            i+=1;
+            i += 1;
         }
     };
     println!("Child key (index: {}): {}", index, child_key);
@@ -232,19 +309,33 @@ fn main() -> anyhow::Result<()> {
     let (child_pub_key, index) = {
         let mut i = 0;
         loop {
-            if let Ok(child_pub_key) = derive_child_from_public_key_non_hardened(&root_key.public, i) {
-                break (child_pub_key, i)
+            if let Ok(child_pub_key) =
+                derive_child_from_public_key_non_hardened(&root_key.public, i)
+            {
+                break (child_pub_key, i);
             }
-            i+=1;
+            i += 1;
         }
     };
     println!("Child public key (index: {}): {}", index, child_pub_key);
 
-
-    // Need to implement signing or use a crate for this:
-    // https://github.com/typed-io/rust-ed25519-bip32/tree/master
-
     assert_eq!(child_key.public.key, child_pub_key.key);
+
+    // Signing
+    let message = b"Hello World!";
+    let signature = sign(&child_key, message)?;
+    let mut signature_fake = signature.clone();
+    signature_fake[13] += 1;
+
+    let verify_result = verify(&child_pub_key, message, &signature)?;
+    let verify_result_fake = verify(&child_pub_key, message, &signature_fake)?;
+
+    println!("Signature: {}, valid: {}", z32::encode(&signature), verify_result);
+    println!("Signature-fake: {}, valid: {}", z32::encode(&signature_fake),verify_result_fake);
+
+    // Verification
+    assert!(verify_result);
+    assert!(!verify_result_fake);
 
     Ok(())
 }
