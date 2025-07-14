@@ -36,11 +36,11 @@ fn main() -> anyhow::Result<()> {
     //      (that is unavoidably known to non-authors) to override the child public key
     //      on for example Pkarr; but if the root_key is used to sign every query message published then
     //      clients can verify the signature and the worst that can happen is a "DoS" attack. 
-    //      But to my understanding (wich is to be questioned ^^) pkarr also doesn't protect against this attack.
-    //      (i am using pkarr here as an example but the same applies to the underlying bittorrent dht with the extension:
+    //      But to my understanding (which is to be questioned ^^) pkarr also doesn't protect against this attack.
+    //      (I am using pkarr here as an example but the same applies to the underlying bittorrent dht with the extension:
     //       https://www.bittorrent.org/beps/bep_0044.html).
-    //     PLEASE CORRECT ME IF I AM WRONG or ask questions, we should investigate any doughts 
-    //      (especially since i am not an cryptography expert ^^).
+    //     PLEASE CORRECT ME IF I AM WRONG or ask questions, we should investigate any doubts
+    //      (especially since I am not a cryptography expert ^^ - neither am I!).
     let child_pub_key = derive_child_pub(&root_public_key, "example_query")?;
     println!("Child public key (derived from public key): \n{}", z32::encode(child_pub_key.as_bytes()));
     println!();
