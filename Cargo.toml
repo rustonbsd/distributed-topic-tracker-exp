@@ -1,0 +1,15 @@
+[package]
+name = "distributed-topic-tracker-exp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sha2 = "0.10"
+anyhow = "1"
+z32 = "1.3"
+hmac = "0.12"
+primitive-types = "0.13"
+
+secp256k1 = { version = "0.31.1", features = ["rand", "hashes"] }
+curve25519-dalek = { version = "4.2.0" }
+ed25519-dalek = { version = "2.2.0" }
