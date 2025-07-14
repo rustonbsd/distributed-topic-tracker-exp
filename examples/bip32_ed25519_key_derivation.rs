@@ -57,7 +57,7 @@ fn generate_root_key(master_secret: &[u8; 32]) -> anyhow::Result<ExtendedPrivate
     root_secret_key_left.copy_from_slice(&root_secret_mac[..32]);
     root_secret_key_right.copy_from_slice(&root_secret_mac[32..]);
 
-    // "If the third highest bit of the last byte of kL is not zero, discard this key"
+    // "If the third-highest bit of the last byte of kL is not zero, discard this key"
     if root_secret_key_left[31] & 0b00100000 != 0 {
         return Err(anyhow::anyhow!(
             "third highest bit requirement not met. invalid root key"
@@ -66,7 +66,7 @@ fn generate_root_key(master_secret: &[u8; 32]) -> anyhow::Result<ExtendedPrivate
 
     root_secret_key_left[0] &= 0b11111000; // "the lowest 3 bits of the first byte of kL of are cleared"
     root_secret_key_left[31] &= 0b01111111; // " the highest bit of the last byte is cleared"
-    root_secret_key_left[31] |= 0b01000000; // " the second highest bit of the last byte is set"
+    root_secret_key_left[31] |= 0b01000000; // " the second-highest bit of the last byte is set"
 
     // [kL]B = "interpret kL as a little-endian integer and perform a fixed-base scalar multiplication"
     let key_left_scalar = Scalar::from_bytes_mod_order(root_secret_key_left.clone());
@@ -295,7 +295,7 @@ fn main() -> anyhow::Result<()> {
     //       https://datatracker.ietf.org/doc/html/rfc8032
     //       all features like signing and verification should still work as expected
     //       and the ability to derive child public keys from root public keys without
-    //       exposing the child secret keys to the non-authors of the root secret key is achived.
+    //       exposing the child secret keys to the non-authors of the root secret key is archived.
     //       (this might not be the recommended from a cryptographic best practice standpoint! idk)
     //
     //       This follows the indexing based approach in the paper one to one:
@@ -304,11 +304,11 @@ fn main() -> anyhow::Result<()> {
     //       I will add an example building on this where the index is derived from the hashed query bytes.
     //       But in principle, we can index our queries uniformly in that space
     //       by simply hashing the query bytes and taking the first N bytes (or what ever order)
-    //       and use them as the index integer. Since not all indicies make for valid child keys, 
+    //       and use them as the index integer. Since not all indices make for valid child keys,
     //       both author and client keep adding +1 to the query index until a valid key is hit.
     //       (this is deterministic for both client and author and will always lead to the same first hit index)
     //       If we wanted to increase the space further the paper has some information about
-    //       child child keys, and so on:
+    //       child keys, and so on:
     //
     //       "E. Key tree 
     //         Child with i < 2^31 can be a parent for his children with his

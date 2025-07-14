@@ -1,5 +1,5 @@
 // Non-Hardned key, therefore we can do simple scalar arithmetic with pub and private keys
-// and keep them consisten as long as we derive the "scalar" from the query deterministically.
+// and keep them consistent as long as we derive the "scalar" from the query deterministically.
 
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
@@ -20,7 +20,7 @@ fn derive_child_pub(pub_key: &PublicKey, query: &str) -> anyhow::Result<PublicKe
     let query_scalar = SecretKey::from_byte_array(query_hash)?;
     let query_point = PublicKey::from_secret_key(&secp, &query_scalar);
 
-    // now we "add" the query_point to the parent public key (this failes if the resulting point is at infinity)
+    // now we "add" the query_point to the parent public key (this fails if the resulting point is at infinity)
     // child_public_key = parent_public_key + query_scalar*G
     let child_public_key = pub_key.combine(&query_point)?;
 
@@ -37,7 +37,7 @@ fn derive_child_sec(sec_key: &SecretKey, query: &str) -> anyhow::Result<SecretKe
     // Parse hash as query Scalar and treat it as a SecretKey
     let query_scalar = SecretKey::from_byte_array(query_hash)?;
 
-    // now we "tweak" the root secret key by query_scalar amunt mod curve order:
+    // now we "tweak" the root secret key by query_scalar amount mod curve order:
     // Child key = (parent_key + query_scalar) mod n
     let child_secret_key = sec_key.add_tweak(&query_scalar.into())?;
 
