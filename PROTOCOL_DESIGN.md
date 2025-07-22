@@ -46,7 +46,7 @@ but I think we could use everything above this line to formalize the requirement
 2. if no records found, repeat step 1 with `i = (i + 1) % N`
 3. for all found records, decrypt with shared secret and verify the record
 4. add all found records to a list of bootstrap nodes, if all collected bootstrap node lists contain more then `MIN_BOOTSTRAP_NODES` nodes, we join the gossip topic in iroh-gossip
-5. if failed, continue with 1
+5. if failed, publish your own record and then continue with 1
 6. on succes, switch to publisher mode
 
 

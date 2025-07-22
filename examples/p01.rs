@@ -1,7 +1,10 @@
 use anyhow::Result;
-use futures_lite::StreamExt;
+use distributed_topic_tracker_exp::p01::{
+    AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, P01TopicId,
+};
+use futures::StreamExt;
 use iroh::{Endpoint, SecretKey};
-use iroh_gossip::net::Gossip;
+use iroh_gossip::{api::Event, net::Gossip};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,10 +18,9 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
-
     // Initialize gossip with auto-discovery
     let gossip = Gossip::builder()
-        .spawn_with_auto_discovery(endpoint.clone())
+        .spawn_with_auto_discovery::<DefaultSecretRotation>(endpoint.clone(), None)
         .await?;
 
     // Set up protocol router
@@ -26,24 +28,26 @@ async fn main() -> Result<()> {
         .accept(iroh_gossip::ALPN, gossip.gossip.clone())
         .spawn();
 
-    // Create topic from passphrase
-    let topic = Topic::from_passphrase("my-iroh-gossip-topic");
+    let topic_id = P01TopicId::new("my-iroh-gossip-topic".to_string());
+    let initial_secret = b"my-initial-secret".to_vec();
 
-    // Split into sink (sending) and stream (receiving) 
-    let (mut sink, mut stream) = gossip.subscribe_and_join(topic.into()).await?.split();
+    // Split into sink (sending) and stream (receiving)
+    let (sink, mut stream) = gossip
+        .subscribe_and_join_with_auto_discovery(topic_id, &initial_secret)
+        .await?
+        .split();
 
     // Spawn listener for incoming messages
     tokio::spawn(async move {
-        while let Some(event) = stream.next().await {
-
-            if let Ok(Event::Received(msg)) = event {
+        while let Ok(event) = stream.recv().await {
+            if let Event::Received(msg) = event {
                 println!(
                     "Message from {}: {}",
                     &msg.delivered_from.to_string()[0..8],
                     String::from_utf8(msg.content.to_vec()).unwrap()
                 );
-            } else if let Ok(Event::NeighborUp(peer)) = event {
-                println!("Joined by {}",&peer.to_string()[0..8]);                
+            } else if let Event::NeighborUp(peer) = event {
+                println!("Joined by {}", &peer.to_string()[0..8]);
             }
         }
     });
@@ -54,7 +58,10 @@ async fn main() -> Result<()> {
     loop {
         print!("> ");
         stdin.read_line(&mut buffer).unwrap();
-        sink.broadcast(buffer.clone().replace("\n","").into()).await.unwrap();
+        sink.broadcast(buffer.clone().replace("\n", "").into())
+            .await
+            .unwrap();
+        println!("Sent");
         buffer.clear();
     }
 }
