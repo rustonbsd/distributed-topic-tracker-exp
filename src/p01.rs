@@ -1,15 +1,13 @@
 use std::{
     collections::HashSet,
-    pin::Pin,
-    task::{Context, Poll},
     time::Duration,
 };
 
 use anyhow::{Result, bail};
 use ed25519_dalek::ed25519::signature::SignerMut;
-use futures::{Stream, StreamExt as _};
+use futures::{StreamExt as _};
 use iroh::Endpoint;
-use iroh_gossip::api::{ApiError, Event, GossipReceiver, GossipSender};
+use iroh_gossip::api::{Event, GossipReceiver, GossipSender};
 use mainline::MutableItem;
 use once_cell::sync::OnceCell;
 use primitive_types::{U256, U512};
@@ -18,7 +16,7 @@ use sha2::Digest;
 use ed25519_dalek_hpke::{Ed25519hpkeDecryption, Ed25519hpkeEncryption};
 use tokio::{sync::Mutex, time::sleep};
 
-pub const SLOTS_N: u8 = 3;
+pub const SLOTS_N: u8 = 1;
 pub const SECRET_ROTATION: DefaultSecretRotation = DefaultSecretRotation;
 
 // only once init dht
@@ -358,7 +356,7 @@ impl P01GossipReceiver {
                         gossip_event_res = gossip_receiver.next() => {
                             if let Some(Ok(gossip_event)) = gossip_event_res {
                                 println!("gossip receiver task -> received event: {:?}", gossip_event);
-                                println!("receivers: {:?}", gossip_forward_tx.send(gossip_event).expect("broadcast failed"));
+                                gossip_forward_tx.send(gossip_event).expect("broadcast failed");
                             } else {
                                 println!("gossip receiver task exited");
                                 break;
@@ -627,10 +625,12 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
        - get all records from get_all(pubkey, salt) where pubkey is the derived signature public key from the topic and unix minute as follows: keypair_seed = hash( topic + unix_minute )
        - decrypt all records withe the shared secret
        - verify the records
+       - if there are less then 4 (5 is usual, 4 during peer rotations, 3 or less small swarm or sub group) active peers in iroh-gossip neighborhood, add unique node ids from the records to the topic
        - if 1 <= valid records found, sleep for some time then repeat 1
        - if only invalid record or no records found, write your own record into your slot for the current unix minute.
        - sleep for some time then repeat 1
     */
+    // returns the records that were found for the key
     async fn publish(
         unix_minute: u64,
         topic_id: &P01TopicId,
@@ -639,7 +639,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         node_id: iroh::NodeId,
         node_signing_key: &ed25519_dalek::SigningKey,
         neighbors: HashSet<iroh::NodeId>,
-    ) -> Result<()> {
+    ) -> Result<HashSet<Record>> {
         let topic_hash = topic_id.hash;
         let sign_key = P01Topic::<R>::signing_keypair(&topic_id.clone(), unix_minute);
         let salt_index = P01Topic::<R>::slot_index(&topic_id.clone(), &node_id, unix_minute);
@@ -676,8 +676,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         drop(dht);
 
         if records.len() >= 1 {
-            //println!("fake publish");
-            return Ok(());
+            return Ok(records);
         }
 
         // Publish own records
@@ -714,13 +713,13 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             MutableItem::new(sign_key, &encrypted_record.to_bytes(), 0, Some(&salt_slot))
         };
 
-        if let Err(err) = dht.put_mutable(item.clone(), Some(item.seq())) {
+        if let Err(_) = dht.put_mutable(item.clone(), Some(item.seq())) {
             //println!("failed to publish record: {}", err);
             bail!("failed to publish record")
         }
         drop(dht);
 
-        Ok(())
+        Ok(HashSet::new())
     }
 
     fn spawn_publisher(
@@ -732,12 +731,15 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         let initial_secret_hash = self.initial_secret_hash;
         let node_id = self.node_id;
         let mut gossip_receiver = self.gossip_receiver.clone();
+        let gossip_sender = self.gossip_sender.clone();
         let node_signing_key = node_signing_key.clone();
 
         tokio::spawn(async move {
             let mut backoff = 1;
             loop {
-                if let Err(_) = P01Topic::<R>::publish(
+                // - if there are less then 4 (5 is usual, 4 during peer rotations, 3 or less small swarm or sub group) active peers in iroh-gossip neighborhood, add unique node ids from the records to the topic
+
+                if let Ok(records) = P01Topic::<R>::publish(
                     super::unix_minute(0),
                     &topic_id,
                     Some(secret_rotation_function.clone()),
@@ -746,8 +748,27 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                     &node_signing_key,
                     gossip_receiver.neighbors().await,
                 )
-                .await
-                {
+                .await {
+                    let neighbors = gossip_receiver.neighbors().await;
+                    println!("neighbors: {}", neighbors.len());
+                    if neighbors.len() < 4 && !records.is_empty() {
+                        for record in records {
+                            for active_peer in record.active_peers {
+                                if active_peer == [0; 32] {
+                                    continue;
+                                }
+                                if neighbors.contains(&active_peer) || active_peer.eq(node_id.as_bytes()) {
+                                    continue;
+                                }
+                                if let Ok(node_id) = iroh::NodeId::from_bytes(&active_peer) {
+                                    if gossip_sender.join_peers(vec![node_id]).await.is_ok() {
+                                        println!("group-merger -> joined peer {}", node_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
                     println!("failed to publish record");
                     sleep(Duration::from_secs(backoff)).await;
                     backoff = (backoff * 2).max(60);
