@@ -25,3 +25,6 @@ once_cell = "1.21.3"
 
 mainline = "5.4.0"
 rand = "0.8"
+
+hcloud = "0.21.0"
+ssh-key = { version = "0.6.7", features = ["ed25519"] }

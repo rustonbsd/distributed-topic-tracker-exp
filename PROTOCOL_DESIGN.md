@@ -36,9 +36,10 @@ but I think we could use everything above this line to formalize the requirement
 1. get all records from `get_all(pubkey, salt)` where pubkey is the derived signature public key from the topic and unix minute as follows: `keypair_seed = hash( topic + unix_minute )`
 2. decrypt all records withe the shared secret
 3. verify the records
-4. if 1 <= valid records found, sleep for some time then repeat 1
-5. if only invalid record or no records found, write your own record into your slot for the current unix minute.
-6. sleep for some time then repeat 1
+4. if there are less then 4 (5 is usual, 4 during peer rotations, 3 or less small swarm or sub group) active peers in iroh-gossip neighborhood, add unique node ids from the records to the topic
+5. if 1 <= valid records found, sleep for some time then repeat 1
+6. if only invalid record or no records found, write your own record into your slot for the current unix minute.
+7. sleep for some time then repeat 1
 
 ## Bootstrap procedure (simple)
 
