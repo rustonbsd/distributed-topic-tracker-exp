@@ -1,0 +1,35 @@
+{
+  "autorun": false,
+  "terminals": [
+    {
+      "name": "p01_0_0",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_0_1",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_0_2",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_0_3",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_0_4",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    }
+  ]
+}

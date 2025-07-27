@@ -2,12 +2,12 @@ use anyhow::Result;
 use distributed_topic_tracker_exp::p01::{
     AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, P01TopicId,
 };
-use futures::StreamExt;
 use iroh::{Endpoint, SecretKey};
 use iroh_gossip::{api::Event, net::Gossip};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
     // Generate a new random secret key
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
 
@@ -28,8 +28,10 @@ async fn main() -> Result<()> {
         .accept(iroh_gossip::ALPN, gossip.gossip.clone())
         .spawn();
 
-    let topic_id = P01TopicId::new("my-iroh-gossip-topic".to_string());
+    let topic_id = P01TopicId::new("my-iroh-gossip-topic-1".to_string());
     let initial_secret = b"my-initial-secret".to_vec();
+
+    println!("p01 example");
 
     // Split into sink (sending) and stream (receiving)
     let (sink, mut stream) = gossip

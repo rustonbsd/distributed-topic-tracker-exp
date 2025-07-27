@@ -1,22 +1,25 @@
-use std::{
-    collections::HashSet,
-    time::Duration,
-};
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::{Result, bail};
 use ed25519_dalek::ed25519::signature::SignerMut;
-use futures::{StreamExt as _};
+use futures::StreamExt as _;
 use iroh::Endpoint;
-use iroh_gossip::api::{Event, GossipReceiver, GossipSender};
+use iroh_gossip::{
+    api::{Event, GossipReceiver, GossipSender},
+    proto::DeliveryScope,
+};
 use mainline::MutableItem;
 use once_cell::sync::OnceCell;
 use primitive_types::{U256, U512};
+use rand::seq::SliceRandom;
 use sha2::Digest;
 
 use ed25519_dalek_hpke::{Ed25519hpkeDecryption, Ed25519hpkeEncryption};
 use tokio::{sync::Mutex, time::sleep};
 
 pub const SLOTS_N: u8 = 1;
+pub const MAX_JOIN_PEERS_COUNT: usize = 100;
+pub const MAX_BOOTSTRAP_RECORDS: usize = 10;
 pub const SECRET_ROTATION: DefaultSecretRotation = DefaultSecretRotation;
 
 // only once init dht
@@ -24,13 +27,15 @@ static DHT: OnceCell<Mutex<mainline::Dht>> = OnceCell::new();
 
 fn get_dht() -> &'static Mutex<mainline::Dht> {
     DHT.get_or_init(|| {
-        Mutex::new(
-            mainline::Dht::builder()
-                .request_timeout(Duration::from_millis(2000))
-                .build()
-                .expect("failed to create dht"),
+        Mutex::new(mainline::Dht::client().expect("failed to create dht")
         )
     })
+}
+
+async fn reset_dht() {
+    let mut dht = get_dht().lock().await;
+    *dht = mainline::Dht::client().expect("failed to create dht");
+    drop(dht);
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +51,7 @@ pub struct Record {
     slot: u8,
     node_id: [u8; 32],
     active_peers: [[u8; 32]; 5],
+    last_message_hashes: [[u8; 32]; 5],
     signature: [u8; 64],
 }
 
@@ -75,6 +81,7 @@ pub struct P01TopicId {
 pub struct P01GossipReceiver {
     gossip_event_forwarder: tokio::sync::broadcast::Sender<iroh_gossip::api::Event>,
     action_req: tokio::sync::broadcast::Sender<P01InnerActionRecv>,
+    last_message_hashes: Vec<[u8; 32]>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,11 +102,22 @@ enum P01InnerActionSend {
 }
 
 impl EncryptedRecord {
-    pub fn decrypt(&self, decryption_key: &ed25519_dalek::SigningKey) -> Result<Record> {
-        let one_time_key_bytes = decryption_key
+    pub fn decrypt(
+        &self,
+        decryption_key: &ed25519_dalek::SigningKey,
+        last_decryption_key: Option<&ed25519_dalek::SigningKey>,
+    ) -> Result<Record> {
+        let one_time_key_bytes: [u8; 32] = match decryption_key
             .decrypt(&self.encrypted_decryption_key)?
             .try_into()
-            .map_err(|_| anyhow::anyhow!("failed to convert one time key bytes to array"))?;
+        {
+            Ok(one_time_key_bytes) => one_time_key_bytes,
+            Err(_) => last_decryption_key
+                .ok_or(anyhow::anyhow!("failed to decrypt one time key"))?
+                .decrypt(&self.encrypted_decryption_key)?
+                .as_slice()
+                .try_into()?,
+        };
         let one_time_key = ed25519_dalek::SigningKey::from_bytes(&one_time_key_bytes);
 
         let decrypted_record = one_time_key.decrypt(&self.encrypted_record)?;
@@ -136,8 +154,10 @@ impl Record {
         slot: u8,
         node_id: [u8; 32],
         active_peers: [[u8; 32]; 5],
+        last_message_hashes: [[u8; 32]; 5],
         signing_key: &ed25519_dalek::SigningKey,
     ) -> Self {
+        println!("topic: {}", z32::encode(&topic));
         let mut signature_data = Vec::new();
         signature_data.extend_from_slice(&topic);
         signature_data.extend_from_slice(&unix_minute.to_le_bytes());
@@ -145,6 +165,9 @@ impl Record {
         signature_data.extend_from_slice(&node_id);
         for active_peer in active_peers {
             signature_data.extend_from_slice(&active_peer);
+        }
+        for last_message_hash in last_message_hashes {
+            signature_data.extend_from_slice(&last_message_hash);
         }
         let mut signing_key = signing_key.clone();
         let signature = signing_key.sign(&signature_data);
@@ -154,6 +177,7 @@ impl Record {
             slot,
             node_id,
             active_peers,
+            last_message_hashes,
             signature: signature.to_bytes(),
         }
     }
@@ -164,11 +188,16 @@ impl Record {
         let (slot, buf) = buf.split_at(1);
         let (node_id, mut buf) = buf.split_at(32);
 
-        let active_peer_count = ((buf.len() - 64) as f32 / 32f32).floor() as usize;
         let mut active_peers: [[u8; 32]; 5] = [[0; 32]; 5];
-        for i in 0..active_peer_count {
+        for i in 0..active_peers.len() {
             let (active_peer, _buf) = buf.split_at(32);
             active_peers[i] = active_peer.try_into()?;
+            buf = _buf;
+        }
+        let mut last_message_hashes: [[u8; 32]; 5] = [[0; 32]; 5];
+        for i in 0..last_message_hashes.len() {
+            let (last_message_hash, _buf) = buf.split_at(32);
+            last_message_hashes[i] = last_message_hash.try_into()?;
             buf = _buf;
         }
 
@@ -184,6 +213,7 @@ impl Record {
             slot: slot[0],
             node_id: node_id.try_into()?,
             active_peers: active_peers.try_into()?,
+            last_message_hashes: last_message_hashes.try_into()?,
             signature: signature.try_into()?,
         })
     }
@@ -197,6 +227,9 @@ impl Record {
         for active_peer in self.active_peers {
             buf.extend_from_slice(&active_peer);
         }
+        for last_message_hash in self.last_message_hashes {
+            buf.extend_from_slice(&last_message_hash);
+        }
         buf.extend_from_slice(&self.signature);
         buf
     }
@@ -208,12 +241,22 @@ impl Record {
         actual_slot: u8,
     ) -> Result<()> {
         if self.topic != *actual_topic {
+            println!(
+                "Failed: topic: {}, actual_topic: {}",
+                z32::encode(&self.topic),
+                z32::encode(actual_topic)
+            );
             bail!("topic mismatch")
         }
         if self.unix_minute != actual_unix_minute {
+            println!(
+                "Failed: unix_minute: {}, actual_unix_minute: {}",
+                self.unix_minute, actual_unix_minute
+            );
             bail!("unix minute mismatch")
         }
         if self.slot != actual_slot {
+            println!("Failed: slot: {}, actual_slot: {}", self.slot, actual_slot);
             bail!("slot mismatch")
         }
 
@@ -223,7 +266,7 @@ impl Record {
         let node_id = ed25519_dalek::VerifyingKey::from_bytes(&self.node_id)?;
 
         node_id.verify_strict(signature_data.as_slice(), &signature)?;
-        if self
+        /*if self
             .active_peers
             .iter()
             .filter(|&active_peer| active_peer.eq(&[0; 32]))
@@ -231,7 +274,7 @@ impl Record {
             == 0
         {
             bail!("active peers contains zero node id")
-        }
+        }*/
         Ok(())
     }
 
@@ -246,6 +289,9 @@ impl Record {
         data.extend_from_slice(&self.node_id);
         for active_peer in self.active_peers {
             data.extend_from_slice(&active_peer);
+        }
+        for last_message_hash in self.last_message_hashes {
+            data.extend_from_slice(&last_message_hash);
         }
         data.extend_from_slice(&self.signature);
 
@@ -307,7 +353,17 @@ impl P01GossipSender {
         }
     }
 
-    pub async fn join_peers(&self, peers: Vec<iroh::NodeId>) -> Result<()> {
+    pub async fn join_peers(
+        &self,
+        peers: Vec<iroh::NodeId>,
+        max_peers: Option<usize>,
+    ) -> Result<()> {
+        let mut peers = peers;
+        if let Some(max_peers) = max_peers {
+            peers.shuffle(&mut rand::thread_rng());
+            peers.truncate(max_peers);
+        }
+
         let (tx, mut rx) = tokio::sync::broadcast::channel::<bool>(1);
         self.action_req
             .send(P01InnerActionSend::ReqJoinPeers(peers, tx))
@@ -330,13 +386,18 @@ impl P01GossipReceiver {
 
         tokio::spawn({
             async move {
-                while let Ok(_) = gossip_forward_rx.recv().await { }
+                while let Ok(_) = gossip_forward_rx.recv().await {}
                 println!("gossip forwarder task exited");
             }
         });
 
+        let self_ref = Self {
+            gossip_event_forwarder: gossip_forward_tx,
+            action_req: action_req_tx,
+            last_message_hashes: vec![],
+        };
         tokio::spawn({
-            let gossip_forward_tx = gossip_forward_tx.clone();
+            let mut self_ref = self_ref.clone();
             async move {
                 let mut gossip_receiver = gossip_receiver;
                 loop {
@@ -355,8 +416,17 @@ impl P01GossipReceiver {
                         }
                         gossip_event_res = gossip_receiver.next() => {
                             if let Some(Ok(gossip_event)) = gossip_event_res {
-                                println!("gossip receiver task -> received event: {:?}", gossip_event);
-                                gossip_forward_tx.send(gossip_event).expect("broadcast failed");
+                                //println!("gossip receiver task -> received event: {:?}", gossip_event);
+                                if let Event::Received(msg) = gossip_event.clone() {
+                                    if let DeliveryScope::Swarm(_) = msg.scope {
+                                        let hash = sha2::Sha512::digest(&msg.content);
+                                        self_ref.last_message_hashes.push(hash[..32].try_into().expect("hashing failed"));
+                                        while self_ref.last_message_hashes.len() > 5 {
+                                            self_ref.last_message_hashes.pop();
+                                        }
+                                    }
+                                }
+                                self_ref.gossip_event_forwarder.send(gossip_event).expect("broadcast failed");
                             } else {
                                 println!("gossip receiver task exited");
                                 break;
@@ -368,10 +438,7 @@ impl P01GossipReceiver {
             }
         });
 
-        Self {
-            gossip_event_forwarder: gossip_forward_tx,
-            action_req: action_req_tx,
-        }
+        self_ref
     }
 
     pub async fn neighbors(&mut self) -> HashSet<iroh::NodeId> {
@@ -404,7 +471,15 @@ impl P01GossipReceiver {
     }
 
     pub async fn recv(&mut self) -> Result<Event> {
-        self.gossip_event_forwarder.subscribe().recv().await.map_err(|err| anyhow::anyhow!(err))
+        self.gossip_event_forwarder
+            .subscribe()
+            .recv()
+            .await
+            .map_err(|err| anyhow::anyhow!(err))
+    }
+
+    pub fn last_message_hashes(&self) -> Vec<[u8; 32]> {
+        self.last_message_hashes.clone()
     }
 }
 
@@ -453,6 +528,8 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             P01GossipReceiver::new(gossip_receiver),
         );
 
+        println!("bootstrap -> connected to gossip topic");
+
         let mut initial_secret_hash = sha2::Sha512::new();
         initial_secret_hash.update(initial_secret);
         let initial_secret_hash: [u8; 32] = initial_secret_hash.finalize()[..32]
@@ -467,29 +544,35 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 }
             }
 
-            let unix_minute = super::unix_minute(0);
-            let topic_sign = P01Topic::<R>::signing_keypair(&topic_id, unix_minute);
-            let encryption_key = P01Topic::<R>::encryption_keypair(
-                &topic_id,
-                &secret_rotation_function.clone().unwrap_or_default(),
-                initial_secret_hash,
-                unix_minute,
-            );
-
             let mut i: u8 = 0;
+            let mut unix_minute;
+            let mut topic_sign;
             let records = loop {
+                unix_minute = super::unix_minute(0);
+                topic_sign = P01Topic::<R>::signing_keypair(&topic_id, unix_minute);
+                let encryption_key = P01Topic::<R>::encryption_keypair(
+                    &topic_id,
+                    &secret_rotation_function.clone().unwrap_or_default(),
+                    initial_secret_hash,
+                    unix_minute,
+                );
                 let salt = P01Topic::<R>::slot_salt(&topic_id, i, unix_minute);
 
                 // Get records, decrypt and verify
                 //println!("bootstrap -> checking slothash {}, signkey {}",z32::encode(&salt),z32::encode(topic_sign.verifying_key().as_bytes()));
+                println!("locking dht");
                 let dht = get_dht().lock().await;
-                let records = dht
-                    .get_mutable(topic_sign.verifying_key().as_bytes(), Some(&salt), None)
-                    .filter_map(|record| {
-                        //println!("bootstrap -> found record with seq {}", record.seq());
+                println!("locked dht");
+                let records_iter = dht
+                    .get_mutable(topic_sign.verifying_key().as_bytes(), Some(&salt), None).collect::<Vec<_>>();
+                println!("got records iter");
+                let records = records_iter
+                    .iter().filter_map(|record| {
+                        println!("bootstrap -> found record with seq {}", record.seq());
 
                         match EncryptedRecord::from_bytes(record.value().to_vec()) {
-                            Ok(encrypted_record) => match encrypted_record.decrypt(&encryption_key)
+                            Ok(encrypted_record) => match encrypted_record
+                                .decrypt(&encryption_key, None)
                             {
                                 Ok(record) => match record.verify(&topic_id.hash, unix_minute, i) {
                                     Ok(_) => match record
@@ -519,8 +602,8 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                         }
                     })
                     .collect::<Vec<_>>();
+                println!("dropping dht");
                 drop(dht);
-                println!("bootstrap -> found {} records in slot {}", records.len(), i);
 
                 if !records.is_empty() {
                     break records;
@@ -534,12 +617,17 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                         endpoint.node_id().clone(),
                         node_signing_key,
                         HashSet::new(),
+                        vec![],
                     )
                     .await
                     .is_ok()
                     {
                         last_published_unix_minute = unix_minute;
-                        println!("published record {}", unix_minute);
+                        println!(
+                            "published record topic {}, c_topic_key {}",
+                            z32::encode(&topic_id.hash),
+                            z32::encode(topic_sign.verifying_key().as_bytes())
+                        );
                     } else {
                         println!("failed to publish record");
                     }
@@ -567,7 +655,13 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 })
                 .flatten()
                 .collect::<HashSet<_>>();
-            println!("bootstrap -> found {} node ids", all_node_ids.len());
+            println!(
+                "bootstrap -> found {} records in slot {}, topic {}, c_topic_key {}",
+                records.len(),
+                i,
+                z32::encode(&topic_id.hash),
+                z32::encode(topic_sign.verifying_key().as_bytes())
+            );
 
             let bootstrap_nodes = all_node_ids
                 .iter()
@@ -577,11 +671,18 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 })
                 .collect::<Vec<iroh::NodeId>>();
 
-            if gossip_receiver.is_joined().await {
+            if gossip_receiver.neighbors().await.len() > 0 {
                 break (gossip_sender, gossip_receiver);
             }
 
-            if gossip_sender.join_peers(bootstrap_nodes).await.is_err() {
+            if gossip_sender
+                .join_peers(
+                    bootstrap_nodes.iter().cloned().collect::<Vec<_>>(),
+                    Some(MAX_JOIN_PEERS_COUNT),
+                )
+                .await
+                .is_err()
+            {
                 if unix_minute != last_published_unix_minute {
                     if Self::publish(
                         unix_minute,
@@ -591,15 +692,24 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                         endpoint.node_id().clone(),
                         node_signing_key,
                         HashSet::new(),
+                        vec![],
                     )
                     .await
                     .is_ok()
                     {
                         last_published_unix_minute = unix_minute;
-                        println!("bootstrap -> published record {}", unix_minute);
+                        println!(
+                            "bootstrap -> published record topic {}, c_topic_key {}",
+                            z32::encode(&topic_id.hash),
+                            z32::encode(topic_sign.verifying_key().as_bytes())
+                        );
                     }
                 }
                 sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            sleep(Duration::from_millis(750)).await;
+            if gossip_receiver.neighbors().await.len() == 0 {
                 continue;
             }
             break (gossip_sender, gossip_receiver);
@@ -639,6 +749,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         node_id: iroh::NodeId,
         node_signing_key: &ed25519_dalek::SigningKey,
         neighbors: HashSet<iroh::NodeId>,
+        last_message_hashes: Vec<[u8; 32]>,
     ) -> Result<HashSet<Record>> {
         let topic_hash = topic_id.hash;
         let sign_key = P01Topic::<R>::signing_keypair(&topic_id.clone(), unix_minute);
@@ -656,7 +767,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             .get_mutable(sign_key.verifying_key().as_bytes(), Some(&salt_slot), None)
             .filter_map(
                 |record| match EncryptedRecord::from_bytes(record.value().to_vec()) {
-                    Ok(enc_record) => match enc_record.decrypt(&decryption_key) {
+                    Ok(enc_record) => match enc_record.decrypt(&decryption_key, None) {
                         Ok(record) => match record.verify(&topic_hash, unix_minute, salt_index) {
                             Ok(_) => {
                                 if !record.node_id.eq(node_id.as_bytes()) {
@@ -665,17 +776,38 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                                     None
                                 }
                             }
-                            Err(_) => None,
+                            Err(_) => {
+                                println!("publish -> failed to verify record");
+                                None
+                            }
                         },
-                        Err(_) => None,
+                        Err(_) => {
+                            println!("publish -> failed to decrypt record");
+                            None
+                        }
                     },
-                    Err(_) => None,
+                    Err(_) => {
+                        println!("publish -> failed to decode record");
+                        None
+                    }
                 },
             )
             .collect::<HashSet<_>>();
         drop(dht);
 
-        if records.len() >= 1 {
+        if records.iter().any(|record| {
+            record
+                .active_peers
+                .iter()
+                .filter(|&peer| peer.eq(&[0u8; 32]))
+                .count()
+                + record
+                    .last_message_hashes
+                    .iter()
+                    .filter(|&hash| hash.eq(&[0u8; 32]))
+                    .count()
+                > MAX_BOOTSTRAP_RECORDS
+        }) {
             return Ok(records);
         }
 
@@ -686,38 +818,60 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             //println!("publishing active peer {}", peer);
         }
 
+        let mut last_message_hashes_array = [[0u8; 32]; 5];
+        for (i, hash) in last_message_hashes.iter().take(5).enumerate() {
+            last_message_hashes_array[i] = *hash;
+        }
+
         let record = Record::sign(
             topic_hash,
             unix_minute,
             salt_index,
             node_id.as_bytes().clone(),
             active_peers,
+            last_message_hashes_array,
             &node_signing_key,
         );
 
         let encrypted_record = record.encrypt(&decryption_key);
         //println!("publish -> slothash {}, signkey {}",z32::encode(&salt_slot),z32::encode(sign_key.verifying_key().as_bytes()));
 
-        let dht = get_dht().lock().await;
-        let item = if let Some(mut_item) =
-            dht.get_mutable_most_recent(sign_key.verifying_key().as_bytes(), Some(&salt_slot))
-        {
-            //println!("publish -> found existing record with seq {}",mut_item.seq());
-            MutableItem::new(
-                sign_key,
-                &encrypted_record.to_bytes(),
-                mut_item.seq() + 1,
+        for i in 0..3 {
+            let dht = get_dht().lock().await;
+            let item = if let Some(mut_item) = dht.get_mutable_most_recent(
+                sign_key.clone().verifying_key().as_bytes(),
                 Some(&salt_slot),
-            )
-        } else {
-            MutableItem::new(sign_key, &encrypted_record.to_bytes(), 0, Some(&salt_slot))
-        };
+            ) {
+                //println!("publish -> found existing record with seq {}",mut_item.seq());
+                MutableItem::new(
+                    sign_key.clone(),
+                    &encrypted_record.to_bytes(),
+                    mut_item.seq() + 1,
+                    Some(&salt_slot),
+                )
+            } else {
+                MutableItem::new(
+                    sign_key.clone(),
+                    &encrypted_record.to_bytes(),
+                    0,
+                    Some(&salt_slot),
+                )
+            };
 
-        if let Err(_) = dht.put_mutable(item.clone(), Some(item.seq())) {
-            //println!("failed to publish record: {}", err);
-            bail!("failed to publish record")
+            if let Ok(_) = dht.put_mutable(item.clone(), Some(item.seq())) {
+                drop(dht);
+                break;
+            } else if i == 2 {
+                drop(dht);
+                //println!("failed to publish record: {}", err);
+                bail!("failed to publish record")
+            }
+
+            drop(dht);
+            reset_dht().await;
+
+            sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await;
         }
-        drop(dht);
 
         Ok(HashSet::new())
     }
@@ -739,32 +893,112 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             loop {
                 // - if there are less then 4 (5 is usual, 4 during peer rotations, 3 or less small swarm or sub group) active peers in iroh-gossip neighborhood, add unique node ids from the records to the topic
 
+                let unix_minute = super::unix_minute(0);
                 if let Ok(records) = P01Topic::<R>::publish(
-                    super::unix_minute(0),
+                    unix_minute,
                     &topic_id,
                     Some(secret_rotation_function.clone()),
                     initial_secret_hash,
                     node_id,
                     &node_signing_key,
                     gossip_receiver.neighbors().await,
+                    gossip_receiver.last_message_hashes(),
                 )
-                .await {
+                .await
+                {
                     let neighbors = gossip_receiver.neighbors().await;
                     println!("neighbors: {}", neighbors.len());
+
+                    // Cluster size as bubble indicator
                     if neighbors.len() < 4 && !records.is_empty() {
-                        for record in records {
-                            for active_peer in record.active_peers {
-                                if active_peer == [0; 32] {
-                                    continue;
+                        let node_ids = records
+                            .iter()
+                            .map(|record| {
+                                record
+                                    .active_peers
+                                    .iter()
+                                    .filter_map(|&active_peer| {
+                                        if active_peer == [0; 32]
+                                            || neighbors.contains(&active_peer)
+                                            || active_peer.eq(record.node_id.to_vec().as_slice())
+                                            || active_peer.eq(node_id.as_bytes())
+                                        {
+                                            None
+                                        } else if let Ok(node_id) =
+                                            iroh::NodeId::from_bytes(&active_peer)
+                                        {
+                                            Some(node_id)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .flatten()
+                            .collect::<HashSet<_>>();
+                        if gossip_sender
+                            .join_peers(
+                                node_ids.iter().cloned().collect::<Vec<_>>(),
+                                Some(MAX_JOIN_PEERS_COUNT),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            println!("group-merger -> joined peer {}", node_id);
+                        }
+                    }
+
+                    // Message overlap indicator
+                    if gossip_receiver.last_message_hashes().len() >= 1 {
+                        let peers_to_join = records
+                            .iter()
+                            .filter_map(|record| {
+                                if !record.last_message_hashes.iter().all(|last_message_hash| {
+                                    *last_message_hash != [0; 32]
+                                        && gossip_receiver
+                                            .last_message_hashes()
+                                            .contains(&last_message_hash)
+                                }) {
+                                    Some(record)
+                                } else {
+                                    None
                                 }
-                                if neighbors.contains(&active_peer) || active_peer.eq(node_id.as_bytes()) {
-                                    continue;
-                                }
-                                if let Ok(node_id) = iroh::NodeId::from_bytes(&active_peer) {
-                                    if gossip_sender.join_peers(vec![node_id]).await.is_ok() {
-                                        println!("group-merger -> joined peer {}", node_id);
+                            })
+                            .collect::<Vec<_>>();
+                        if !peers_to_join.is_empty() {
+                            let node_ids = peers_to_join
+                                .iter()
+                                .filter_map(|&record| {
+                                    let mut peers = vec![];
+                                    if let Ok(node_id) = iroh::NodeId::from_bytes(&record.node_id) {
+                                        peers.push(node_id);
                                     }
-                                }
+                                    for active_peer in record.active_peers {
+                                        if active_peer == [0; 32] {
+                                            continue;
+                                        }
+                                        if let Ok(node_id) = iroh::NodeId::from_bytes(&active_peer)
+                                        {
+                                            peers.push(node_id);
+                                        }
+                                    }
+                                    Some(peers)
+                                })
+                                .flatten()
+                                .collect::<HashSet<_>>();
+
+                            if gossip_sender
+                                .join_peers(
+                                    node_ids.iter().cloned().collect::<Vec<_>>(),
+                                    Some(MAX_JOIN_PEERS_COUNT),
+                                )
+                                .await
+                                .is_ok()
+                            {
+                                println!(
+                                    "bouble detected: no-message-overlap -> joined {} peers",
+                                    node_ids.len()
+                                );
                             }
                         }
                     }
@@ -774,7 +1008,15 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                     backoff = (backoff * 2).max(60);
                     continue;
                 }
-                println!("published record");
+                println!(
+                    "published record topic {}, c_topic_key {}",
+                    z32::encode(&topic_id.hash),
+                    z32::encode(
+                        P01Topic::<R>::signing_keypair(&topic_id.clone(), unix_minute)
+                            .verifying_key()
+                            .as_bytes()
+                    )
+                );
                 backoff = 1;
                 sleep(Duration::from_secs(rand::random::<u64>() % 60)).await;
             }
