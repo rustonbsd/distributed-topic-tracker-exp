@@ -15,7 +15,7 @@ use rand::seq::SliceRandom;
 use sha2::Digest;
 
 use ed25519_dalek_hpke::{Ed25519hpkeDecryption, Ed25519hpkeEncryption};
-use tokio::{sync::Mutex, time::sleep};
+use tokio::{sync::Mutex, time::{sleep, timeout}};
 
 pub const SLOTS_N: u8 = 1;
 pub const MAX_JOIN_PEERS_COUNT: usize = 100;
@@ -561,10 +561,24 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 // Get records, decrypt and verify
                 //println!("bootstrap -> checking slothash {}, signkey {}",z32::encode(&salt),z32::encode(topic_sign.verifying_key().as_bytes()));
                 println!("locking dht");
-                let dht = get_dht().lock().await;
+                let _dht = get_dht().lock().await;
+                let dht = _dht.clone().as_async();
+                drop(_dht);
+
                 println!("locked dht");
-                let records_iter = dht
-                    .get_mutable(topic_sign.verifying_key().as_bytes(), Some(&salt), None).collect::<Vec<_>>();
+                
+                let records_iter = match timeout(
+                    Duration::from_secs(10),
+                    dht.get_mutable(topic_sign.verifying_key().as_bytes(), Some(&salt), None)
+                        .collect::<Vec<_>>()
+                ).await {
+                    Ok(records) => records,
+                    Err(_) => {
+                        println!("DHT get_mutable operation timed out");
+                        vec![]
+                    }
+                };
+
                 println!("got records iter");
                 let records = records_iter
                     .iter().filter_map(|record| {
@@ -603,7 +617,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                     })
                     .collect::<Vec<_>>();
                 println!("dropping dht");
-                drop(dht);
+                //drop(dht);
 
                 if !records.is_empty() {
                     break records;
@@ -768,10 +782,23 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             initial_secret_hash,
             unix_minute,
         );
-
-        let dht = get_dht().lock().await;
-        let records = dht
-            .get_mutable(sign_key.verifying_key().as_bytes(), Some(&salt_slot), None)
+        let _dht = get_dht().lock().await;
+        let dht = _dht.clone().as_async();
+        drop(_dht);
+        
+        println!("publish -> getting records");
+        let records_iter = match timeout(
+            Duration::from_secs(10),
+            dht.get_mutable(sign_key.verifying_key().as_bytes(), Some(&salt_slot), None)
+                .collect::<Vec<_>>()
+        ).await {
+            Ok(records) => records,
+            Err(_) => {
+                println!("DHT get_mutable operation timed out");
+                vec![]
+            }
+        };
+        let records = records_iter.iter()
             .filter_map(
                 |record| match EncryptedRecord::from_bytes(record.value().to_vec()) {
                     Ok(enc_record) => match enc_record.decrypt(&decryption_key, None) {
@@ -800,7 +827,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 },
             )
             .collect::<HashSet<_>>();
-        drop(dht);
+        println!("publish -> got {} records", records.len());
 
         if records.iter().any(|record| {
             record
@@ -844,11 +871,25 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         //println!("publish -> slothash {}, signkey {}",z32::encode(&salt_slot),z32::encode(sign_key.verifying_key().as_bytes()));
 
         for i in 0..3 {
-            let dht = get_dht().lock().await;
-            let item = if let Some(mut_item) = dht.get_mutable_most_recent(
-                sign_key.clone().verifying_key().as_bytes(),
-                Some(&salt_slot),
-            ) {
+            let _dht = get_dht().lock().await;
+            let dht = _dht.clone().as_async();
+            drop(_dht);
+
+            let most_recent_result = match timeout(
+                Duration::from_secs(10),
+                dht.get_mutable_most_recent(
+                    sign_key.clone().verifying_key().as_bytes(),
+                    Some(&salt_slot),
+                )
+            ).await {
+                Ok(result) => result,
+                Err(_) => {
+                    println!("DHT get_mutable_most_recent operation timed out");
+                    None
+                }
+            };
+
+            let item = if let Some(mut_item) = most_recent_result {
                 //println!("publish -> found existing record with seq {}",mut_item.seq());
                 MutableItem::new(
                     sign_key.clone(),
@@ -865,16 +906,24 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 )
             };
 
-            if let Ok(_) = dht.put_mutable(item.clone(), Some(item.seq())) {
-                drop(dht);
+            let put_result = match timeout(
+                Duration::from_secs(10),
+                dht.put_mutable(item.clone(), Some(item.seq()))
+            ).await {
+                Ok(result) => result.ok(),
+                Err(_) => {
+                    println!("DHT put_mutable operation timed out");
+                    None
+                }
+            };
+
+            if put_result.is_some() {
                 break;
             } else if i == 2 {
-                drop(dht);
                 //println!("failed to publish record: {}", err);
                 bail!("failed to publish record")
             }
 
-            drop(dht);
             reset_dht().await;
 
             sleep(Duration::from_millis(rand::random::<u64>() % 2000)).await;

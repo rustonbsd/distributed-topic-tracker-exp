@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         .accept(iroh_gossip::ALPN, gossip.gossip.clone())
         .spawn();
 
-    let topic_id = P01TopicId::new("my-iroh-gossip-topic-1".to_string());
+    let topic_id = P01TopicId::new("my-iroh-gossip-topic".to_string());
     let initial_secret = b"my-initial-secret".to_vec();
 
     println!("p01 example");

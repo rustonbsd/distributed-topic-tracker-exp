@@ -2,31 +2,121 @@
   "autorun": false,
   "terminals": [
     {
-      "name": "p01_0_0",
+      "name": "p01_2_0",
       "description": "Run p01 example",
       "execute": true,
       "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
     },
     {
-      "name": "p01_0_1",
+      "name": "p01_2_1",
       "description": "Run p01 example",
       "execute": true,
       "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
     },
     {
-      "name": "p01_0_2",
+      "name": "p01_2_2",
       "description": "Run p01 example",
       "execute": true,
       "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
     },
     {
-      "name": "p01_0_3",
+      "name": "p01_2_3",
       "description": "Run p01 example",
       "execute": true,
       "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
     },
     {
-      "name": "p01_0_4",
+      "name": "p01_2_4",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_5",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_6",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_7",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_8",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_9",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_10",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_11",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_12",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_13",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_14",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_15",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_16",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_17",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_18",
+      "description": "Run p01 example",
+      "execute": true,
+      "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
+    },
+    {
+      "name": "p01_2_19",
       "description": "Run p01 example",
       "execute": true,
       "command":  "sleep $((RANDOM % 10)); cargo run --release --example p01"
