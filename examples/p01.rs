@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use distributed_topic_tracker_exp::p01::{
     AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, P01TopicId,
@@ -53,6 +55,15 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    tokio::spawn({
+        let sink = sink.clone();
+        async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 60000)).await;
+            let _ = sink.broadcast(format!("chatter-{}", rand::random::<u64>()).into()).await;
+        }
+    }});
 
     // Main input loop for sending messages
     let mut buffer = String::new();

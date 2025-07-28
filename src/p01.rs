@@ -27,14 +27,14 @@ static DHT: OnceCell<Mutex<mainline::Dht>> = OnceCell::new();
 
 fn get_dht() -> &'static Mutex<mainline::Dht> {
     DHT.get_or_init(|| {
-        Mutex::new(mainline::Dht::client().expect("failed to create dht")
+        Mutex::new(mainline::Dht::builder().build().expect("failed to create dht")
         )
     })
 }
 
 async fn reset_dht() {
     let mut dht = get_dht().lock().await;
-    *dht = mainline::Dht::client().expect("failed to create dht");
+    *dht = mainline::Dht::builder().build().expect("failed to create dht");
     drop(dht);
 }
 
@@ -675,13 +675,23 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 break (gossip_sender, gossip_receiver);
             }
 
-            if gossip_sender
-                .join_peers(
-                    bootstrap_nodes.iter().cloned().collect::<Vec<_>>(),
-                    Some(MAX_JOIN_PEERS_COUNT),
-                )
-                .await
-                .is_err()
+            for node_id in bootstrap_nodes.iter() {
+                match gossip_sender.join_peers(vec![node_id.clone()], None).await {
+                    Ok(_) => {
+                        sleep(Duration::from_millis(100)).await;
+                        if gossip_receiver.is_joined().await {   
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        continue;
+                    }
+                }
+            }
+
+            sleep(Duration::from_millis(500)).await;
+
+            if !gossip_receiver.is_joined().await
             {
                 if unix_minute != last_published_unix_minute {
                     if Self::publish(
@@ -707,12 +717,9 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 }
                 sleep(Duration::from_millis(100)).await;
                 continue;
+            } else {
+                break (gossip_sender, gossip_receiver)
             }
-            sleep(Duration::from_millis(750)).await;
-            if gossip_receiver.neighbors().await.len() == 0 {
-                continue;
-            }
-            break (gossip_sender, gossip_receiver);
         };
 
         println!("bootstrap -> connected to gossip topic");
