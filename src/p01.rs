@@ -537,6 +537,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             .expect("hashing failed");
 
         let mut last_published_unix_minute = 0;
+        let mut first_try = true;
         let (gossip_sender, gossip_receiver) = loop {
             {
                 if gossip_receiver.is_joined().await {
@@ -548,7 +549,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             let mut unix_minute;
             let mut topic_sign;
             let records = loop {
-                unix_minute = super::unix_minute(0);
+                unix_minute = super::unix_minute(if first_try { first_try=false; -1 } else { 0 });
                 topic_sign = P01Topic::<R>::signing_keypair(&topic_id, unix_minute);
                 let encryption_key = P01Topic::<R>::encryption_keypair(
                     &topic_id,
