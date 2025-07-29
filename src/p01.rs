@@ -15,7 +15,10 @@ use rand::seq::SliceRandom;
 use sha2::Digest;
 
 use ed25519_dalek_hpke::{Ed25519hpkeDecryption, Ed25519hpkeEncryption};
-use tokio::{sync::Mutex, time::{sleep, timeout}};
+use tokio::{
+    sync::Mutex,
+    time::{sleep, timeout},
+};
 
 pub const SLOTS_N: u8 = 1;
 pub const MAX_JOIN_PEERS_COUNT: usize = 100;
@@ -27,14 +30,19 @@ static DHT: OnceCell<Mutex<mainline::Dht>> = OnceCell::new();
 
 fn get_dht() -> &'static Mutex<mainline::Dht> {
     DHT.get_or_init(|| {
-        Mutex::new(mainline::Dht::builder().build().expect("failed to create dht")
+        Mutex::new(
+            mainline::Dht::builder()
+                .build()
+                .expect("failed to create dht"),
         )
     })
 }
 
 async fn reset_dht() {
     let mut dht = get_dht().lock().await;
-    *dht = mainline::Dht::builder().build().expect("failed to create dht");
+    *dht = mainline::Dht::builder()
+        .build()
+        .expect("failed to create dht");
     drop(dht);
 }
 
@@ -549,7 +557,12 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             let mut unix_minute;
             let mut topic_sign;
             let records = loop {
-                unix_minute = super::unix_minute(if first_try { first_try=false; -1 } else { 0 });
+                unix_minute = super::unix_minute(if first_try {
+                    first_try = false;
+                    -1
+                } else {
+                    0
+                });
                 topic_sign = P01Topic::<R>::signing_keypair(&topic_id, unix_minute);
                 let encryption_key = P01Topic::<R>::encryption_keypair(
                     &topic_id,
@@ -567,12 +580,14 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 drop(_dht);
 
                 println!("locked dht");
-                
+
                 let records_iter = match timeout(
                     Duration::from_secs(10),
                     dht.get_mutable(topic_sign.verifying_key().as_bytes(), Some(&salt), None)
-                        .collect::<Vec<_>>()
-                ).await {
+                        .collect::<Vec<_>>(),
+                )
+                .await
+                {
                     Ok(records) => records,
                     Err(_) => {
                         println!("DHT get_mutable operation timed out");
@@ -582,7 +597,8 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
 
                 println!("got records iter");
                 let records = records_iter
-                    .iter().filter_map(|record| {
+                    .iter()
+                    .filter_map(|record| {
                         println!("bootstrap -> found record with seq {}", record.seq());
 
                         match EncryptedRecord::from_bytes(record.value().to_vec()) {
@@ -694,7 +710,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 match gossip_sender.join_peers(vec![node_id.clone()], None).await {
                     Ok(_) => {
                         sleep(Duration::from_millis(100)).await;
-                        if gossip_receiver.is_joined().await {   
+                        if gossip_receiver.is_joined().await {
                             break;
                         }
                     }
@@ -706,8 +722,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
 
             sleep(Duration::from_millis(500)).await;
 
-            if !gossip_receiver.is_joined().await
-            {
+            if !gossip_receiver.is_joined().await {
                 if unix_minute != last_published_unix_minute {
                     if Self::publish(
                         unix_minute,
@@ -733,7 +748,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 sleep(Duration::from_millis(100)).await;
                 continue;
             } else {
-                break (gossip_sender, gossip_receiver)
+                break (gossip_sender, gossip_receiver);
             }
         };
 
@@ -786,20 +801,23 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
         let _dht = get_dht().lock().await;
         let dht = _dht.clone().as_async();
         drop(_dht);
-        
+
         println!("publish -> getting records");
         let records_iter = match timeout(
             Duration::from_secs(10),
             dht.get_mutable(sign_key.verifying_key().as_bytes(), Some(&salt_slot), None)
-                .collect::<Vec<_>>()
-        ).await {
+                .collect::<Vec<_>>(),
+        )
+        .await
+        {
             Ok(records) => records,
             Err(_) => {
                 println!("DHT get_mutable operation timed out");
                 vec![]
             }
         };
-        let records = records_iter.iter()
+        let records = records_iter
+            .iter()
             .filter_map(
                 |record| match EncryptedRecord::from_bytes(record.value().to_vec()) {
                     Ok(enc_record) => match enc_record.decrypt(&decryption_key, None) {
@@ -830,19 +848,24 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             .collect::<HashSet<_>>();
         println!("publish -> got {} records", records.len());
 
-        if records.iter().any(|record| {
-            record
-                .active_peers
-                .iter()
-                .filter(|&peer| peer.eq(&[0u8; 32]))
-                .count()
-                + record
-                    .last_message_hashes
+        if records
+            .iter()
+            .filter(|&record| {
+                record
+                    .active_peers
                     .iter()
-                    .filter(|&hash| hash.eq(&[0u8; 32]))
+                    .filter(|&peer| peer.eq(&[0u8; 32]))
                     .count()
-                > MAX_BOOTSTRAP_RECORDS
-        }) {
+                    + record
+                        .last_message_hashes
+                        .iter()
+                        .filter(|&hash| hash.eq(&[0u8; 32]))
+                        .count()
+                    > 0
+            })
+            .count()
+            >= MAX_BOOTSTRAP_RECORDS
+        {
             return Ok(records);
         }
 
@@ -881,8 +904,10 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
                 dht.get_mutable_most_recent(
                     sign_key.clone().verifying_key().as_bytes(),
                     Some(&salt_slot),
-                )
-            ).await {
+                ),
+            )
+            .await
+            {
                 Ok(result) => result,
                 Err(_) => {
                     println!("DHT get_mutable_most_recent operation timed out");
@@ -909,8 +934,10 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
 
             let put_result = match timeout(
                 Duration::from_secs(10),
-                dht.put_mutable(item.clone(), Some(item.seq()))
-            ).await {
+                dht.put_mutable(item.clone(), Some(item.seq())),
+            )
+            .await
+            {
                 Ok(result) => result.ok(),
                 Err(_) => {
                     println!("DHT put_mutable operation timed out");
