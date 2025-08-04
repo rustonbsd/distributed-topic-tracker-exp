@@ -539,7 +539,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             }
 
             // On the first try we check the prev unix minute, after that the current one
-            let unix_minute = super::unix_minute(if last_published_unix_minute == 0 {
+            let unix_minute = crate::unix_minute(if last_published_unix_minute == 0 {
                 -1
             } else {
                 0
@@ -784,7 +784,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             println!("spawn_publisher -> started");
             let mut backoff = 1;
             loop {
-                let unix_minute = super::unix_minute(0);
+                let unix_minute = crate::unix_minute(0);
 
                 // Run publish_proc() (publishing procedure that is aware of MAX_BOOTSTRAP_RECORDS already written)
                 if let Ok(records) = P01Topic::<R>::publish_proc(
