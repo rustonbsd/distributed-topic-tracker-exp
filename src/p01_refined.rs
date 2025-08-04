@@ -109,20 +109,11 @@ enum P01InnerActionSend {
 impl EncryptedRecord {
     pub fn decrypt(
         &self,
-        decryption_key: &ed25519_dalek::SigningKey,
-        last_decryption_key: Option<&ed25519_dalek::SigningKey>,
+        decryption_key: &ed25519_dalek::SigningKey
     ) -> Result<Record> {
-        let one_time_key_bytes: [u8; 32] = match decryption_key
-            .decrypt(&self.encrypted_decryption_key)?
-            .try_into()
-        {
-            Ok(one_time_key_bytes) => one_time_key_bytes,
-            Err(_) => last_decryption_key
-                .ok_or(anyhow::anyhow!("failed to decrypt one time key"))?
-                .decrypt(&self.encrypted_decryption_key)?
-                .as_slice()
-                .try_into()?,
-        };
+        let one_time_key_bytes: [u8; 32] = decryption_key
+            .decrypt(&self.encrypted_decryption_key)?.as_slice()
+            .try_into()?;
         let one_time_key = ed25519_dalek::SigningKey::from_bytes(&one_time_key_bytes);
 
         let decrypted_record = one_time_key.decrypt(&self.encrypted_record)?;
@@ -1000,7 +991,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> P01Topic<R> {
             .iter()
             .filter_map(|record| {
                 match EncryptedRecord::from_bytes(record.value().to_vec()) {
-                    Ok(encrypted_record) => match encrypted_record.decrypt(&encryption_key, None) {
+                    Ok(encrypted_record) => match encrypted_record.decrypt(&encryption_key) {
                         Ok(record) => match record.verify(&topic_id.hash, unix_minute) {
                             Ok(_) => match record.node_id.eq(node_id.as_bytes()) {
                                 true => {
