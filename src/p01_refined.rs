@@ -273,7 +273,7 @@ impl P01GossipSender {
             tokio::sync::broadcast::channel::<P01InnerActionSend>(1024);
 
         tokio::spawn({
-            let mut gossip_sender = gossip_sender;
+            let gossip_sender = gossip_sender;
             async move {
                 loop {
                     match action_req_rx.recv().await {

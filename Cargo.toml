@@ -16,8 +16,8 @@ ed25519-dalek = { version = "2.2.0" }
 ed25519-dalek-hpke = { version = "0.0.4" }
 
 tokio = { version = "1.46.1", features = ["full","sync"] }
-iroh = { version = "0.90.0" }
-iroh-gossip = { version = "0.90.0" }
+iroh = { version = "0.91.1" }
+iroh-gossip = { version = "0.91.0" }
 futures = "0.3.31"
 
 chrono = "0.4"
