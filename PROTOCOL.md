@@ -182,7 +182,7 @@ flowchart TD
   K --> L[Calculate Salt hash = topic + unix_minute]
   L --> M[Query DHT: get_mutable = signing_pubkey, salt; Timeout: 10s]
 
-  M --> N{Records Found?]
+  M --> N{Records Found?}
   N -- No --> O{Published This Minute?}
   O -- No  --> P[Publish Own Record via publish_proc]
   O -- Yes --> Q[Sleep 100ms]
