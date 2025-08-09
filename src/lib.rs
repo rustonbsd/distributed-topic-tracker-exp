@@ -490,6 +490,34 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
     pub fn split(&self) -> (GossipSender, GossipReceiver) {
         (self.gossip_sender.clone(), self.gossip_receiver.clone())
     }
+
+    pub fn topic_id(&self) -> &TopicId {
+        &self.topic_id
+    }
+
+    pub fn node_id(&self) -> &iroh::NodeId {
+        &self.node_id
+    }
+
+    pub fn gossip_sender(&self) -> GossipSender {
+        self.gossip_sender.clone()
+    }
+
+    pub fn gossip_receiver(&self) -> GossipReceiver {
+        self.gossip_receiver.clone()
+    }
+
+    pub fn secret_rotation_function(&self) -> R {
+        self.secret_rotation_function.clone()
+    }
+
+    pub fn initial_secret_hash(&self) -> [u8; 32] {
+        self.initial_secret_hash
+    }
+
+    pub fn set_initial_secret_hash(&mut self, initial_secret_hash: [u8; 32]) {
+        self.initial_secret_hash = initial_secret_hash;
+    }
 }
 
 // Procedures: Bootstrap, Publishing, Publisher
