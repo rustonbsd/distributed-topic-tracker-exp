@@ -1,15 +1,14 @@
-use std::time::Duration;
-
 use anyhow::Result;
-use distributed_topic_tracker_exp::p01::{
-    AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, P01TopicId,
-};
 use iroh::{Endpoint, SecretKey};
 use iroh_gossip::{api::Event, net::Gossip};
 
+// Imports from distrubuted-topic-tracker
+use distributed_topic_tracker::{
+    AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, TopicId,
+};
+
 #[tokio::main]
 async fn main() -> Result<()> {
-
     // Generate a new random secret key
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
 
@@ -30,10 +29,8 @@ async fn main() -> Result<()> {
         .accept(iroh_gossip::ALPN, gossip.gossip.clone())
         .spawn();
 
-    let topic_id = P01TopicId::new("my-iroh-gossip-topic".to_string());
+    let topic_id = TopicId::new("my-iroh-gossip-topic".to_string());
     let initial_secret = b"my-initial-secret".to_vec();
-
-    println!("p01 example");
 
     // Split into sink (sending) and stream (receiving)
     let (sink, mut stream) = gossip
@@ -46,35 +43,26 @@ async fn main() -> Result<()> {
         while let Ok(event) = stream.recv().await {
             if let Event::Received(msg) = event {
                 println!(
-                    "Message from {}: {}",
+                    "\nMessage from {}: {}",
                     &msg.delivered_from.to_string()[0..8],
                     String::from_utf8(msg.content.to_vec()).unwrap()
                 );
             } else if let Event::NeighborUp(peer) = event {
-                println!("Joined by {}", &peer.to_string()[0..8]);
+                println!("\nJoined by {}", &peer.to_string()[0..8]);
             }
         }
     });
-
-    tokio::spawn({
-        let sink = sink.clone();
-        async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 60000)).await;
-            let _ = sink.broadcast(format!("chatter-{}", rand::random::<u64>()).into()).await;
-        }
-    }});
 
     // Main input loop for sending messages
     let mut buffer = String::new();
     let stdin = std::io::stdin();
     loop {
-        print!("> ");
+        print!("\n> ");
         stdin.read_line(&mut buffer).unwrap();
         sink.broadcast(buffer.clone().replace("\n", "").into())
             .await
             .unwrap();
-        println!("Sent");
+        print!(" - (sent)\n");
         buffer.clear();
     }
 }
