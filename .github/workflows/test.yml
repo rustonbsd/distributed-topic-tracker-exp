@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, lib-testing ]
   pull_request:
     branches: [ main ]
 
@@ -74,14 +74,14 @@ jobs:
           
           while [ $count -lt $timeout ]; do
             if docker logs $container_name 2>&1 | grep -q "Joined topic"; then
-              echo "✓ $container_name successfully joined topic"
+              echo "$container_name successfully joined topic"
               return 0
             fi
             sleep 2
             count=$((count + 2))
           done
           
-          echo "✗ $container_name failed to join topic within $timeout seconds"
+          echo "$container_name failed to join topic within $timeout seconds"
           echo "Container logs for $container_name:"
           docker logs $container_name
           return 1
@@ -107,10 +107,10 @@ jobs:
         docker-compose down
         
         if [ "$success" = true ]; then
-          echo "✓ End-to-end test PASSED: All nodes successfully joined the topic"
+          echo "End-to-end test PASSED: All nodes successfully joined the topic"
           exit 0
         else
-          echo "✗ End-to-end test FAILED: One or more nodes failed to join the topic"
+          echo "End-to-end test FAILED: One or more nodes failed to join the topic"
           exit 1
         fi
 
