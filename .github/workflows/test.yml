@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ main, lib-testing ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -17,10 +17,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
+    - name: Ensure Rust toolchain
+      run: |
+        rustup update stable
+        rustup default stable
+        rustup component add rustfmt clippy
     
     - name: Cache cargo registry
       uses: actions/cache@v3
@@ -48,13 +49,10 @@ jobs:
   e2e-tests:
     name: End-to-End Tests
     runs-on: ubuntu-latest
-    needs: unit-tests
+
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
     
     - name: Build Docker image
       run: docker build -t distributed-topic-tracker .
@@ -62,7 +60,7 @@ jobs:
     - name: Run end-to-end test
       run: |
         # Start containers in background
-        docker-compose up --build -d
+        docker compose up --build -d
         
         # Function to check if a container has printed "Joined topic"
         check_joined_topic() {
@@ -104,7 +102,7 @@ jobs:
         docker logs dtt-node3
         
         # Clean up
-        docker-compose down
+        docker compose down
         
         if [ "$success" = true ]; then
           echo "End-to-end test PASSED: All nodes successfully joined the topic"
@@ -114,27 +112,4 @@ jobs:
           exit 1
         fi
 
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: llvm-tools-preview
-    
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
-    
-    - name: Generate code coverage
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        files: lcov.info
-        fail_ci_if_error: false
+
