@@ -1,7 +1,15 @@
 [package]
-name = "distributed-topic-tracker-exp"
-version = "0.1.0"
+name = "distributed-topic-tracker"
+description = "auto bootstrap for iroh-gossip topics"
+license = "MIT"
+authors = ["Zacharias Boehler <rustonbsd@mailfence.com>"]
+repository = "https://github.com/rustonbsd/distributed-topic-tracker"
+readme = "README.md"
+keywords = ["networking"]
+categories = ["network-programming"]
+version = "0.1.1"
 edition = "2024"
+
 
 [dependencies]
 sha2 = "0.10"
@@ -10,12 +18,11 @@ z32 = "1.3"
 hmac = "0.12"
 primitive-types = "0.13"
 
-secp256k1 = { version = "0.31.1", features = ["rand", "hashes"] }
 curve25519-dalek = { version = "4.1.3" }
 ed25519-dalek = { version = "2.2.0" }
 ed25519-dalek-hpke = { version = "0.0.4" }
 
-tokio = { version = "1.46.1", features = ["full","sync"] }
+tokio = { version = "1.47.1", features = ["full","sync"] }
 iroh = { version = "0.91.1" }
 iroh-gossip = { version = "0.91.0" }
 futures = "0.3.31"
@@ -25,3 +32,4 @@ once_cell = "1.21.3"
 
 mainline = "5.4.0"
 rand = "0.8"
+arc-swap = "1.7.1"

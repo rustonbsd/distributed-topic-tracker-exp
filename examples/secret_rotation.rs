@@ -1,15 +1,42 @@
-use std::time::Duration;
-
 use anyhow::Result;
-use distributed_topic_tracker_exp::p01::{
-    AutoDiscoveryBuilder, AutoDiscoveryGossip, DefaultSecretRotation, P01TopicId,
-};
 use iroh::{Endpoint, SecretKey};
 use iroh_gossip::{api::Event, net::Gossip};
+use sha2::Digest;
+
+// Imports from distrubuted-topic-tracker
+use distributed_topic_tracker::{
+    AutoDiscoveryBuilder, AutoDiscoveryGossip, SecretRotation, TopicId,
+};
+
+
+#[derive(Debug, Clone, Copy)]
+struct MySecretRotation;
+
+impl SecretRotation for MySecretRotation {
+    fn get_unix_minute_secret(
+        &self,
+        topic_hash: [u8; 32],
+        unix_minute: u64,
+        initial_secret_hash: [u8; 32],
+    ) -> [u8; 32] {
+        let mut hash = sha2::Sha512::new();
+        hash.update(topic_hash);
+        hash.update(unix_minute.to_be_bytes());
+        hash.update(initial_secret_hash);
+        hash.update(b"as long as you return 32 bytes this is a valid secret rotation function");
+        hash.finalize()[..32].try_into().expect("hashing failed")
+    }
+}
+
+impl Default for MySecretRotation {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
     // Generate a new random secret key
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
 
@@ -22,7 +49,7 @@ async fn main() -> Result<()> {
 
     // Initialize gossip with auto-discovery
     let gossip = Gossip::builder()
-        .spawn_with_auto_discovery::<DefaultSecretRotation>(endpoint.clone(), None)
+        .spawn_with_auto_discovery::<MySecretRotation>(endpoint.clone(), None)
         .await?;
 
     // Set up protocol router
@@ -30,10 +57,8 @@ async fn main() -> Result<()> {
         .accept(iroh_gossip::ALPN, gossip.gossip.clone())
         .spawn();
 
-    let topic_id = P01TopicId::new("my-iroh-gossip-topic".to_string());
+    let topic_id = TopicId::new("my-iroh-gossip-topic".to_string());
     let initial_secret = b"my-initial-secret".to_vec();
-
-    println!("p01 example");
 
     // Split into sink (sending) and stream (receiving)
     let (sink, mut stream) = gossip
@@ -41,40 +66,33 @@ async fn main() -> Result<()> {
         .await?
         .split();
 
+    println!("Joined topic");
+
     // Spawn listener for incoming messages
     tokio::spawn(async move {
         while let Ok(event) = stream.recv().await {
             if let Event::Received(msg) = event {
                 println!(
-                    "Message from {}: {}",
+                    "\nMessage from {}: {}",
                     &msg.delivered_from.to_string()[0..8],
                     String::from_utf8(msg.content.to_vec()).unwrap()
                 );
             } else if let Event::NeighborUp(peer) = event {
-                println!("Joined by {}", &peer.to_string()[0..8]);
+                println!("\nJoined by {}", &peer.to_string()[0..8]);
             }
         }
     });
-
-    tokio::spawn({
-        let sink = sink.clone();
-        async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(rand::random::<u64>() % 60000)).await;
-            let _ = sink.broadcast(format!("chatter-{}", rand::random::<u64>()).into()).await;
-        }
-    }});
 
     // Main input loop for sending messages
     let mut buffer = String::new();
     let stdin = std::io::stdin();
     loop {
-        print!("> ");
+        print!("\n> ");
         stdin.read_line(&mut buffer).unwrap();
         sink.broadcast(buffer.clone().replace("\n", "").into())
             .await
             .unwrap();
-        println!("Sent");
+        print!(" - (sent)\n");
         buffer.clear();
     }
 }
