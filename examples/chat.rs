@@ -38,6 +38,8 @@ async fn main() -> Result<()> {
         .await?
         .split();
 
+    println!("Joined topic");
+
     // Spawn listener for incoming messages
     tokio::spawn(async move {
         while let Ok(event) = stream.recv().await {

@@ -224,10 +224,6 @@ impl Record {
             bail!("topic mismatch")
         }
         if self.unix_minute != actual_unix_minute {
-            println!(
-                "Failed: unix_minute: {}, actual_unix_minute: {}",
-                self.unix_minute, actual_unix_minute
-            );
             bail!("unix minute mismatch")
         }
 
@@ -557,15 +553,6 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
                     .is_ok()
                     {
                         last_published_unix_minute = unix_minute;
-                        println!(
-                            "published record topic {}, c_topic_key {}",
-                            z32::encode(&topic_id.hash),
-                            z32::encode(
-                                Topic::<R>::signing_keypair(&topic_id, unix_minute)
-                                    .verifying_key()
-                                    .as_bytes()
-                            )
-                        );
                     }
                 }
                 sleep(Duration::from_millis(100)).await;
@@ -593,16 +580,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
                 })
                 .collect::<HashSet<_>>();
 
-            println!(
-                "bootstrap -> found {} records, topic {}, c_topic_key {}",
-                records.len(),
-                z32::encode(&topic_id.hash),
-                z32::encode(
-                    Topic::<R>::signing_keypair(&topic_id, unix_minute)
-                        .verifying_key()
-                        .as_bytes()
-                )
-            );
+            
 
             // Maybe in the meantime someone connected to us via one of our published records
             // we don't want to disrup the gossip rotations any more then we have to
@@ -653,15 +631,6 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
                     .is_ok()
                     {
                         last_published_unix_minute = unix_minute;
-                        println!(
-                            "bootstrap -> published record topic {}, c_topic_key {}",
-                            z32::encode(&topic_id.hash),
-                            z32::encode(
-                                Topic::<R>::signing_keypair(&topic_id, unix_minute)
-                                    .verifying_key()
-                                    .as_bytes()
-                            )
-                        );
                     }
                 }
                 sleep(Duration::from_millis(100)).await;
@@ -864,10 +833,10 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
                                 .await
                                 .is_ok()
                             {
-                                println!(
+                                /*println!(
                                     "bouble detected: no-message-overlap -> joined {} peers",
                                     node_ids.len()
-                                );
+                                );*/
                             }
                         }
                     }
@@ -876,15 +845,7 @@ impl<R: SecretRotation + Default + Clone + Send + 'static> Topic<R> {
                     backoff = (backoff * 2).max(60);
                     continue;
                 }
-                println!(
-                    "published record topic {}, c_topic_key {}",
-                    z32::encode(&topic_id.hash),
-                    z32::encode(
-                        Topic::<R>::signing_keypair(&topic_id.clone(), unix_minute)
-                            .verifying_key()
-                            .as_bytes()
-                    )
-                );
+                
                 backoff = 1;
                 sleep(Duration::from_secs(rand::random::<u64>() % 60)).await;
             }
