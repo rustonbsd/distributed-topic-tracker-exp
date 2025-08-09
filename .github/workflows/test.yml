@@ -1,0 +1,140 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    
+    - name: Run unit tests
+      run: cargo test --lib
+    
+    - name: Build examples
+      run: cargo build --examples --release
+
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      run: docker build -t distributed-topic-tracker .
+    
+    - name: Run end-to-end test
+      run: |
+        # Start containers in background
+        docker-compose up --build -d
+        
+        # Function to check if a container has printed "Joined topic"
+        check_joined_topic() {
+          local container_name=$1
+          local timeout=${2:-120}
+          local count=0
+          
+          echo "Waiting for $container_name to join topic..."
+          
+          while [ $count -lt $timeout ]; do
+            if docker logs $container_name 2>&1 | grep -q "Joined topic"; then
+              echo "✓ $container_name successfully joined topic"
+              return 0
+            fi
+            sleep 2
+            count=$((count + 2))
+          done
+          
+          echo "✗ $container_name failed to join topic within $timeout seconds"
+          echo "Container logs for $container_name:"
+          docker logs $container_name
+          return 1
+        }
+        
+        # Wait for all nodes to join the topic
+        success=true
+        
+        check_joined_topic "dtt-node1" 120 || success=false
+        check_joined_topic "dtt-node2" 120 || success=false
+        check_joined_topic "dtt-node3" 120 || success=false
+        
+        # Show all container logs for debugging
+        echo "=== Container logs ==="
+        echo "--- Node 1 logs ---"
+        docker logs dtt-node1
+        echo "--- Node 2 logs ---"
+        docker logs dtt-node2
+        echo "--- Node 3 logs ---"
+        docker logs dtt-node3
+        
+        # Clean up
+        docker-compose down
+        
+        if [ "$success" = true ]; then
+          echo "✓ End-to-end test PASSED: All nodes successfully joined the topic"
+          exit 0
+        else
+          echo "✗ End-to-end test FAILED: One or more nodes failed to join the topic"
+          exit 1
+        fi
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+    
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+    
+    - name: Generate code coverage
+      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: lcov.info
+        fail_ci_if_error: false

@@ -144,6 +144,23 @@ Details: PROTOCOL.md.
 
 See ARCHITECTURE.md for diagrams and flows.
 
+## Testing
+
+### Unit Tests
+Run unit tests for core components:
+```bash
+cargo test
+```
+
+### End-to-End Tests
+Test peer discovery across multiple Docker containers:
+```bash
+# Requires Docker and Docker Compose
+./test-e2e.sh
+```
+
+The e2e test verifies that multiple nodes can discover each other through the DHT and successfully join the same gossip topic.
+
 ## Roadmap
 
 - Finalize crate name and publish to crates.io

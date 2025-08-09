@@ -1,0 +1,43 @@
+services:
+  node1:
+    build: .
+    container_name: dtt-node1
+    environment:
+      - RUST_LOG=info
+    networks:
+      - dtt-network
+    # Override the default command to add a delay and identifier
+    command: >
+      sh -c "echo 'Starting node1...' && 
+             sleep 2 && 
+             chat"
+
+  node2:
+    build: .
+    container_name: dtt-node2
+    environment:
+      - RUST_LOG=info
+    networks:
+      - dtt-network
+    # Add a delay to allow node1 to start first
+    command: >
+      sh -c "echo 'Starting node2...' && 
+             sleep 5 && 
+             chat"
+
+  node3:
+    build: .
+    container_name: dtt-node3
+    environment:
+      - RUST_LOG=info
+    networks:
+      - dtt-network
+    # Add a delay to allow other nodes to start first
+    command: >
+      sh -c "echo 'Starting node3...' && 
+             sleep 8 && 
+             chat"
+
+networks:
+  dtt-network:
+    driver: bridge
